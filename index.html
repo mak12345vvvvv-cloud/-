@@ -1,0 +1,1459 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Pro Billiards Online</title>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #0a0a0a;
+            min-height: 100vh;
+            overflow: hidden;
+            color: white;
+            touch-action: none;
+        }
+
+        #gameContainer {
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+        }
+
+        /* Верхняя панель */
+        .top-bar {
+            background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1e 100%);
+            padding: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #ffd700;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            z-index: 100;
+            min-height: 60px;
+            flex-shrink: 0;
+        }
+
+        .player-box {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(255,255,255,0.05);
+            padding: 6px 10px;
+            border-radius: 20px;
+            border: 1px solid rgba(255,215,0,0.3);
+            min-width: 80px;
+            max-width: 35%;
+        }
+
+        .player-box.active {
+            background: rgba(255,215,0,0.2);
+            border-color: #ffd700;
+            box-shadow: 0 0 15px rgba(255,215,0,0.3);
+        }
+
+        .player-avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: bold;
+            font-size: 12px;
+            border: 2px solid #ffd700;
+            flex-shrink: 0;
+        }
+
+        .player-info {
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .player-name {
+            font-size: 11px;
+            font-weight: bold;
+            color: #ffd700;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .player-type {
+            font-size: 9px;
+            opacity: 0.7;
+        }
+
+        .game-info {
+            text-align: center;
+            padding: 0 5px;
+        }
+
+        .room-code {
+            font-size: 10px;
+            color: #888;
+            font-family: monospace;
+        }
+
+        .turn-text {
+            font-size: 12px;
+            color: #fff;
+            font-weight: bold;
+            margin-top: 2px;
+        }
+
+        /* Игровая область */
+        #canvasContainer {
+            flex: 1;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+            min-height: 0;
+        }
+
+        #gameCanvas {
+            box-shadow: 0 0 50px rgba(0,0,0,0.8);
+            max-width: 100%;
+            max-height: 100%;
+            display: block;
+        }
+
+        /* Нижняя панель - фиксированная */
+        .controls-bar {
+            background: linear-gradient(0deg, #1a1a2e 0%, #0f0f1e 100%);
+            padding: 10px 15px 20px;
+            border-top: 2px solid #ffd700;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 100;
+            flex-shrink: 0;
+        }
+
+        .controls-hint {
+            text-align: center;
+            color: #888;
+            font-size: 12px;
+            padding: 5px;
+            line-height: 1.4;
+        }
+
+        .action-buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .btn {
+            padding: 12px 30px;
+            border: none;
+            border-radius: 25px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-weight: bold;
+            text-transform: uppercase;
+            min-height: 44px;
+        }
+
+        .btn-exit {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            min-width: 120px;
+        }
+
+        .btn-exit:active {
+            background: rgba(255,255,255,0.2);
+        }
+
+        /* Меню */
+        .menu-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(135deg, #0f0f23 0%, #1a1a3e 100%);
+            z-index: 1000;
+            display: flex;
+            flex-direction: column;
+            padding: 20px;
+            overflow-y: auto;
+        }
+
+        .menu-header {
+            text-align: center;
+            margin-bottom: 30px;
+            padding-top: 20px;
+        }
+
+        .menu-title {
+            font-size: 2.5em;
+            background: linear-gradient(45deg, #ffd700, #ffed4e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            margin-bottom: 10px;
+            text-shadow: 0 0 30px rgba(255,215,0,0.3);
+        }
+
+        .menu-subtitle {
+            color: #888;
+            font-size: 1em;
+        }
+
+        .menu-grid {
+            display: grid;
+            gap: 15px;
+            max-width: 400px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        .menu-card {
+            background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, rgba(255,255,255,0.05) 100%);
+            border: 1px solid rgba(255,215,0,0.2);
+            border-radius: 20px;
+            padding: 25px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .menu-card:hover, .menu-card:active {
+            background: rgba(255,215,0,0.1);
+            border-color: #ffd700;
+            transform: translateY(-2px);
+        }
+
+        .menu-icon {
+            font-size: 3em;
+            margin-bottom: 10px;
+        }
+
+        .menu-card h3 {
+            color: #ffd700;
+            margin-bottom: 5px;
+            font-size: 1.2em;
+        }
+
+        .menu-card p {
+            font-size: 0.9em;
+            color: #888;
+            line-height: 1.4;
+        }
+
+        /* Модальные окна */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.9);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .modal-content {
+            background: linear-gradient(135deg, #1a1a3e 0%, #0f0f23 100%);
+            border: 2px solid #ffd700;
+            border-radius: 20px;
+            padding: 30px;
+            width: 100%;
+            max-width: 350px;
+            text-align: center;
+        }
+
+        .modal h2 {
+            color: #ffd700;
+            margin-bottom: 20px;
+            font-size: 1.5em;
+        }
+
+        .input-field {
+            width: 100%;
+            padding: 15px;
+            margin: 10px 0;
+            border: 2px solid rgba(255,215,0,0.3);
+            border-radius: 10px;
+            background: rgba(0,0,0,0.3);
+            color: white;
+            font-size: 16px;
+            text-align: center;
+        }
+
+        .input-field:focus {
+            outline: none;
+            border-color: #ffd700;
+        }
+
+        .btn-full {
+            width: 100%;
+            margin: 10px 0;
+            padding: 15px;
+        }
+
+        .btn-shoot {
+            background: linear-gradient(135deg, #ffd700 0%, #ffed4e 100%);
+            color: #000;
+            box-shadow: 0 4px 15px rgba(255,215,0,0.4);
+        }
+
+        /* Экран победы */
+        .winner-screen {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 3000;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .winner-trophy {
+            font-size: 5em;
+            margin-bottom: 20px;
+            animation: bounce 1s infinite;
+        }
+
+        @keyframes bounce {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-20px); }
+        }
+
+        .winner-text {
+            font-size: 2.5em;
+            color: #ffd700;
+            margin-bottom: 10px;
+            text-shadow: 0 0 30px rgba(255,215,0,0.5);
+        }
+
+        .winner-message {
+            font-size: 1.2em;
+            color: #888;
+            margin-bottom: 30px;
+        }
+
+        /* Экран реванша */
+        .rematch-screen {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 2500;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .rematch-title {
+            font-size: 2em;
+            color: #ffd700;
+            margin-bottom: 30px;
+        }
+
+        .rematch-status {
+            display: flex;
+            gap: 40px;
+            margin-bottom: 40px;
+        }
+
+        .player-status {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-icon {
+            width: 60px;
+            height: 60px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.1);
+            border: 3px solid #666;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            transition: all 0.3s;
+        }
+
+        .status-icon.ready {
+            background: rgba(0,255,0,0.2);
+            border-color: #00ff00;
+            box-shadow: 0 0 20px rgba(0,255,0,0.5);
+        }
+
+        .status-name {
+            font-size: 14px;
+            color: #888;
+        }
+
+        .rematch-buttons {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+        }
+
+        .btn-rematch {
+            background: linear-gradient(135deg, #00ff00 0%, #00cc00 100%);
+            color: #000;
+            padding: 15px 40px;
+            font-size: 16px;
+        }
+
+        .btn-exit-game {
+            background: rgba(255,255,255,0.1);
+            color: white;
+            border: 2px solid rgba(255,255,255,0.3);
+            padding: 15px 40px;
+            font-size: 16px;
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        @media (max-width: 380px) {
+            .menu-title { font-size: 1.8em; }
+            .top-bar { padding: 8px 5px; min-height: 55px; }
+            .player-box { padding: 5px 8px; min-width: 70px; }
+            .player-avatar { width: 28px; height: 28px; font-size: 11px; }
+            .player-name { font-size: 10px; }
+            .turn-text { font-size: 11px; }
+            .btn { padding: 10px 25px; font-size: 13px; }
+        }
+
+        @media (max-height: 600px) {
+            .controls-bar { padding: 8px 10px 15px; }
+            .controls-hint { font-size: 11px; }
+            .top-bar { min-height: 50px; }
+        }
+    </style>
+</head>
+<body>
+    <div id="gameContainer">
+        <!-- Меню -->
+        <div id="mainMenu" class="menu-overlay">
+            <div class="menu-header">
+                <div class="menu-title">🎱 Pro Billiards</div>
+                <div class="menu-subtitle">Профессиональный бильярд</div>
+            </div>
+            
+            <div class="menu-grid">
+                <div class="menu-card" onclick="showCreateRoom()">
+                    <div class="menu-icon">🏠</div>
+                    <h3>Создать игру</h3>
+                    <p>Создайте комнату и пригласите друга</p>
+                </div>
+                
+                <div class="menu-card" onclick="showJoinRoom()">
+                    <div class="menu-icon">🚪</div>
+                    <h3>Присоединиться</h3>
+                    <p>Введите код комнаты друга</p>
+                </div>
+                
+                <div class="menu-card" onclick="startBotGame()">
+                    <div class="menu-icon">🤖</div>
+                    <h3>Игра с ботом</h3>
+                    <p>Практика против AI</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Игровой интерфейс -->
+        <div id="gameUI" class="hidden" style="width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="top-bar">
+                <div class="player-box active" id="player1Box">
+                    <div class="player-avatar" id="p1Avatar">P1</div>
+                    <div class="player-info">
+                        <div class="player-name" id="p1Name">Вы</div>
+                        <div class="player-type" id="p1Type">Сплошные</div>
+                    </div>
+                </div>
+                
+                <div class="game-info">
+                    <div class="room-code" id="roomDisplay">КОМНАТА: ----</div>
+                    <div class="turn-text" id="turnText">ВАШ ХОД</div>
+                </div>
+                
+                <div class="player-box" id="player2Box">
+                    <div class="player-avatar" id="p2Avatar">P2</div>
+                    <div class="player-info">
+                        <div class="player-name" id="p2Name">Ожидание...</div>
+                        <div class="player-type" id="p2Type">Полосатые</div>
+                    </div>
+                </div>
+            </div>
+
+            <div id="canvasContainer">
+                <canvas id="gameCanvas"></canvas>
+            </div>
+
+            <div class="controls-bar">
+                <div class="controls-hint" id="controlsHint">
+                    Тяните от битка назад для прицеливания<br>Отпустите для удара
+                </div>
+                <div class="action-buttons">
+                    <button class="btn btn-exit" onclick="leaveGame()">Выйти</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Модальные окна -->
+        <div id="createModal" class="modal">
+            <div class="modal-content">
+                <h2>🏠 Новая игра</h2>
+                <input type="text" class="input-field" id="createName" placeholder="Ваше имя" maxlength="15">
+                <button class="btn btn-shoot btn-full" onclick="createRoom()">Создать комнату</button>
+                <button class="btn btn-exit btn-full" onclick="hideModal('createModal')">Отмена</button>
+            </div>
+        </div>
+
+        <div id="joinModal" class="modal">
+            <div class="modal-content">
+                <h2>🚪 Присоединиться</h2>
+                <input type="text" class="input-field" id="joinName" placeholder="Ваше имя" maxlength="15">
+                <input type="text" class="input-field" id="joinCode" placeholder="Код комнаты" maxlength="6">
+                <button class="btn btn-shoot btn-full" onclick="joinRoom()">Играть</button>
+                <button class="btn btn-exit btn-full" onclick="hideModal('joinModal')">Отмена</button>
+            </div>
+        </div>
+
+        <div id="waitingModal" class="modal">
+            <div class="modal-content">
+                <h2>⏳ Ожидание...</h2>
+                <p style="color: #888; margin-bottom: 15px;">Код комнаты:</p>
+                <div style="font-size: 2em; color: #ffd700; font-weight: bold; margin-bottom: 20px; font-family: monospace;" id="waitingCode">------</div>
+                <p style="color: #666; font-size: 0.9em;">Поделитесь кодом с другом</p>
+                <div style="margin-top: 20px;">
+                    <div style="width: 40px; height: 40px; border: 4px solid rgba(255,215,0,0.3); border-top-color: #ffd700; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto;"></div>
+                </div>
+                <button class="btn btn-exit btn-full" onclick="cancelWaiting()" style="margin-top: 20px;">Отмена</button>
+            </div>
+        </div>
+
+        <!-- Экран победы -->
+        <div id="winnerScreen" class="winner-screen">
+            <div class="winner-trophy">🏆</div>
+            <div class="winner-text" id="winnerTitle">ПОБЕДА!</div>
+            <div class="winner-message" id="winnerMsg">Вы выиграли партию</div>
+        </div>
+
+        <!-- Экран реванша -->
+        <div id="rematchScreen" class="rematch-screen">
+            <div class="rematch-title">🔄 Реванш?</div>
+            <div class="rematch-status">
+                <div class="player-status">
+                    <div class="status-icon" id="p1Status">⏳</div>
+                    <div class="status-name" id="p1StatusName">Вы</div>
+                </div>
+                <div class="player-status">
+                    <div class="status-icon" id="p2Status">⏳</div>
+                    <div class="status-name" id="p2StatusName">Соперник</div>
+                </div>
+            </div>
+            <div class="rematch-buttons">
+                <button class="btn btn-rematch" id="rematchBtn" onclick="requestRematch()">Продолжить</button>
+                <button class="btn btn-exit-game" onclick="exitToMenu()">В меню</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Firebase
+        const firebaseConfig = {
+            apiKey: "AIzaSyBOsVYbzn9fynO33-z7-wWVDp4DRj90IQg",
+            authDomain: "online-games-a4fa6.firebaseapp.com",
+            projectId: "online-games-a4fa6",
+            storageBucket: "online-games-a4fa6.firebasestorage.app",
+            messagingSenderId: "420595716385",
+            appId: "1:420595716385:web:33d2145b4bba1150cb6e60",
+            measurementId: "G-563JYYC4Y9"
+        };
+        
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+
+        // Игровые переменные
+        let canvas, ctx;
+        let canvasWidth = 800, canvasHeight = 400;
+        
+        let gameState = {
+            balls: [],
+            currentPlayer: 1,
+            gameOver: false,
+            winner: null,
+            pottedBalls: [],
+            shotInProgress: false,
+            rematchStatus: { p1: false, p2: false },
+            gameStarted: false
+        };
+        
+        let roomId = null;
+        let playerId = null;
+        let playerNum = null;
+        let isOnline = false;
+        let isMyTurn = true;
+        let unsubscribe = null;
+        let iWantRematch = false;
+        let gameStarted = false;
+        
+        // Физика
+        const FRICTION = 0.985;
+        const WALL_BOUNCE = 0.8;
+        const BALL_RADIUS = 12;
+        const MAX_POWER = 20;
+        
+        // Управление
+        let cueBall = null;
+        let isAiming = false;
+        let aimStart = null;
+        let aimCurrent = null;
+        let ballsMoving = false;
+        
+        // Цвета шаров
+        const BALL_COLORS = {
+            0: '#ffffff',
+            1: '#FFD700', 2: '#0066CC', 3: '#CC0000', 4: '#660099',
+            5: '#FF6600', 6: '#009900', 7: '#990000', 8: '#000000',
+            9: '#FFEB99', 10: '#99CCFF', 11: '#FF9999', 12: '#FF99FF',
+            13: '#FFCC99', 14: '#99FF99', 15: '#FF9999'
+        };
+
+        // Инициализация
+        window.onload = function() {
+            canvas = document.getElementById('gameCanvas');
+            ctx = canvas.getContext('2d');
+            
+            resizeCanvas();
+            window.addEventListener('resize', resizeCanvas);
+            
+            canvas.addEventListener('mousedown', handleStart);
+            canvas.addEventListener('mousemove', handleMove);
+            canvas.addEventListener('mouseup', handleEnd);
+            canvas.addEventListener('touchstart', handleTouchStart, {passive: false});
+            canvas.addEventListener('touchmove', handleTouchMove, {passive: false});
+            canvas.addEventListener('touchend', handleEnd);
+            
+            requestAnimationFrame(gameLoop);
+        };
+
+        function resizeCanvas() {
+            const container = document.getElementById('canvasContainer');
+            const aspect = 2;
+            
+            let w = container.clientWidth - 10;
+            let h = w / aspect;
+            
+            if (h > container.clientHeight - 10) {
+                h = container.clientHeight - 10;
+                w = h * aspect;
+            }
+            
+            canvas.width = 800;
+            canvas.height = 400;
+            canvas.style.width = w + 'px';
+            canvas.style.height = h + 'px';
+        }
+
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX || (e.touches && e.touches[0].clientX);
+            const clientY = e.clientY || (e.touches && e.touches[0].clientY);
+            return {
+                x: (clientX - rect.left) * (canvas.width / rect.width),
+                y: (clientY - rect.top) * (canvas.height / rect.height)
+            };
+        }
+
+        function handleStart(e) {
+            if (!isMyTurn || gameState.gameOver || ballsMoving || isAiming || !gameStarted) return;
+            
+            const pos = getMousePos(e);
+            if (!cueBall) return;
+            
+            const dist = Math.hypot(pos.x - cueBall.x, pos.y - cueBall.y);
+            if (dist < BALL_RADIUS * 4) {
+                isAiming = true;
+                aimStart = { x: cueBall.x, y: cueBall.y };
+                aimCurrent = pos;
+            }
+        }
+
+        function handleMove(e) {
+            if (!isAiming) return;
+            aimCurrent = getMousePos(e);
+        }
+
+        function handleTouchStart(e) {
+            e.preventDefault();
+            handleStart(e);
+        }
+
+        function handleTouchMove(e) {
+            e.preventDefault();
+            handleMove(e);
+        }
+
+        function handleEnd(e) {
+            if (!isAiming) return;
+            
+            isAiming = false;
+            
+            if (!aimStart || !aimCurrent || !cueBall) return;
+            
+            const dx = aimStart.x - aimCurrent.x;
+            const dy = aimStart.y - aimCurrent.y;
+            const dist = Math.hypot(dx, dy);
+            
+            if (dist > 15) {
+                const power = Math.min(dist / 8, MAX_POWER);
+                const angle = Math.atan2(dy, dx);
+                
+                cueBall.vx = Math.cos(angle) * power;
+                cueBall.vy = Math.sin(angle) * power;
+                
+                gameState.shotInProgress = true;
+                gameState.pottedThisTurn = [];
+                
+                if (isOnline && roomId) {
+                    updateGameInDB();
+                }
+            }
+            
+            aimStart = null;
+            aimCurrent = null;
+        }
+
+        // Физика
+        function updatePhysics() {
+            ballsMoving = false;
+            
+            gameState.balls.forEach((ball, idx) => {
+                if (Math.abs(ball.vx) > 0.01 || Math.abs(ball.vy) > 0.01) {
+                    ball.x += ball.vx;
+                    ball.y += ball.vy;
+                    ball.vx *= FRICTION;
+                    ball.vy *= FRICTION;
+                    ballsMoving = true;
+                    
+                    if (ball.x < BALL_RADIUS + 30) {
+                        ball.vx *= -WALL_BOUNCE;
+                        ball.x = BALL_RADIUS + 30;
+                    } else if (ball.x > canvasWidth - BALL_RADIUS - 30) {
+                        ball.vx *= -WALL_BOUNCE;
+                        ball.x = canvasWidth - BALL_RADIUS - 30;
+                    }
+                    
+                    if (ball.y < BALL_RADIUS + 30) {
+                        ball.vy *= -WALL_BOUNCE;
+                        ball.y = BALL_RADIUS + 30;
+                    } else if (ball.y > canvasHeight - BALL_RADIUS - 30) {
+                        ball.vy *= -WALL_BOUNCE;
+                        ball.y = canvasHeight - BALL_RADIUS - 30;
+                    }
+                } else {
+                    ball.vx = 0;
+                    ball.vy = 0;
+                }
+            });
+            
+            for (let i = 0; i < gameState.balls.length; i++) {
+                for (let j = i + 1; j < gameState.balls.length; j++) {
+                    resolveCollision(gameState.balls[i], gameState.balls[j]);
+                }
+            }
+            
+            checkPockets();
+            
+            if (!ballsMoving && gameState.shotInProgress) {
+                gameState.shotInProgress = false;
+                handleTurnEnd();
+            }
+        }
+
+        function resolveCollision(b1, b2) {
+            const dx = b2.x - b1.x;
+            const dy = b2.y - b1.y;
+            const dist = Math.hypot(dx, dy);
+            
+            if (dist < BALL_RADIUS * 2 && dist > 0) {
+                const nx = dx / dist;
+                const ny = dy / dist;
+                
+                const dvx = b2.vx - b1.vx;
+                const dvy = b2.vy - b1.vy;
+                const vel = dvx * nx + dvy * ny;
+                
+                if (vel > 0) return;
+                
+                const impulse = vel * 0.9;
+                b1.vx += impulse * nx;
+                b1.vy += impulse * ny;
+                b2.vx -= impulse * nx;
+                b2.vy -= impulse * ny;
+                
+                const overlap = (BALL_RADIUS * 2 - dist) / 2;
+                b1.x -= nx * overlap;
+                b1.y -= ny * overlap;
+                b2.x += nx * overlap;
+                b2.y += ny * overlap;
+            }
+        }
+
+        function checkPockets() {
+            const pockets = [
+                {x: 30, y: 30}, {x: canvasWidth/2, y: 25}, {x: canvasWidth-30, y: 30},
+                {x: 30, y: canvasHeight-30}, {x: canvasWidth/2, y: canvasHeight-25}, {x: canvasWidth-30, y: canvasHeight-30}
+            ];
+            
+            for (let i = gameState.balls.length - 1; i >= 0; i--) {
+                const ball = gameState.balls[i];
+                for (let pocket of pockets) {
+                    if (Math.hypot(ball.x - pocket.x, ball.y - pocket.y) < 22) {
+                        handlePocket(ball, i);
+                        break;
+                    }
+                }
+            }
+        }
+
+        function handlePocket(ball, index) {
+            if (ball.number === 0) {
+                setTimeout(() => {
+                    ball.x = canvasWidth / 4;
+                    ball.y = canvasHeight / 2;
+                    ball.vx = 0;
+                    ball.vy = 0;
+                    if (!ballsMoving) switchTurn();
+                }, 100);
+            } else if (ball.number === 8) {
+                const currentPlayerType = gameState.currentPlayer === 1 ? 'solid' : 'stripe';
+                const currentPlayerBalls = gameState.balls.filter(b => {
+                    if (currentPlayerType === 'solid') return b.number >= 1 && b.number <= 7;
+                    return b.number >= 9 && b.number <= 15;
+                }).length;
+                
+                if (currentPlayerBalls === 0) {
+                    endGame(gameState.currentPlayer);
+                } else {
+                    endGame(gameState.currentPlayer === 1 ? 2 : 1);
+                }
+                
+                gameState.balls.splice(index, 1);
+            } else {
+                gameState.pottedThisTurn = gameState.pottedThisTurn || [];
+                gameState.pottedThisTurn.push(ball.number);
+                gameState.balls.splice(index, 1);
+            }
+        }
+
+        function handleTurnEnd() {
+            const currentPlayerType = gameState.currentPlayer === 1 ? 'solid' : 'stripe';
+            let pottedOwnBall = false;
+            let pottedOpponentBall = false;
+            
+            if (gameState.pottedThisTurn) {
+                gameState.pottedThisTurn.forEach(num => {
+                    if (num === 8) return;
+                    const isSolid = num <= 7;
+                    if ((currentPlayerType === 'solid' && isSolid) || (currentPlayerType === 'stripe' && !isSolid)) {
+                        pottedOwnBall = true;
+                    } else {
+                        pottedOpponentBall = true;
+                    }
+                });
+            }
+            
+            if (!pottedOwnBall || pottedOpponentBall) {
+                switchTurn();
+            } else {
+                updateUI();
+            }
+            
+            gameState.pottedThisTurn = [];
+            
+            if (isOnline && roomId) {
+                updateGameInDB();
+            }
+        }
+
+        function switchTurn() {
+            gameState.currentPlayer = gameState.currentPlayer === 1 ? 2 : 1;
+            isMyTurn = !isOnline || gameState.currentPlayer === playerNum;
+            updateUI();
+            
+            if (!isOnline && !isMyTurn) {
+                setTimeout(botTurn, 1500);
+            }
+        }
+
+        function botTurn() {
+            if (gameState.gameOver || !gameStarted) return;
+            
+            const botBalls = gameState.balls.filter(b => b.number >= 9 || b.number === 8);
+            const target = botBalls[0];
+            
+            if (target && cueBall) {
+                const angle = Math.atan2(target.y - cueBall.y, target.x - cueBall.x);
+                const power = Math.min(12, Math.hypot(target.x - cueBall.x, target.y - cueBall.y) / 25);
+                
+                cueBall.vx = Math.cos(angle) * power;
+                cueBall.vy = Math.sin(angle) * power;
+                gameState.shotInProgress = true;
+                gameState.pottedThisTurn = [];
+            }
+        }
+
+        function endGame(winner) {
+            gameState.gameOver = true;
+            gameState.winner = winner;
+            
+            const isWinner = !isOnline || winner === playerNum;
+            document.getElementById('winnerTitle').textContent = isWinner ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ';
+            document.getElementById('winnerMsg').textContent = isWinner ? 'Вы выиграли!' : 'Победил соперник';
+            document.getElementById('winnerScreen').style.display = 'flex';
+            
+            if (isOnline && roomId) {
+                db.collection('rooms').doc(roomId).update({
+                    'gameState.gameOver': true,
+                    'gameState.winner': winner
+                });
+            }
+            
+            setTimeout(() => {
+                document.getElementById('winnerScreen').style.display = 'none';
+                showRematchScreen();
+            }, 2000);
+        }
+
+        function showRematchScreen() {
+            document.getElementById('rematchScreen').style.display = 'flex';
+            iWantRematch = false;
+            updateRematchUI();
+            
+            if (isOnline && roomId) {
+                db.collection('rooms').doc(roomId).update({
+                    'gameState.rematchStatus': { p1: false, p2: false }
+                });
+            }
+        }
+
+        function updateRematchUI() {
+            const p1Ready = gameState.rematchStatus?.p1 || false;
+            const p2Ready = gameState.rematchStatus?.p2 || false;
+            
+            document.getElementById('p1Status').textContent = p1Ready ? '✅' : '⏳';
+            document.getElementById('p1Status').classList.toggle('ready', p1Ready);
+            
+            document.getElementById('p2Status').textContent = p2Ready ? '✅' : '⏳';
+            document.getElementById('p2Status').classList.toggle('ready', p2Ready);
+            
+            document.getElementById('rematchBtn').textContent = iWantRematch ? 'Ожидание...' : 'Продолжить';
+            document.getElementById('rematchBtn').disabled = iWantRematch;
+        }
+
+        function requestRematch() {
+            iWantRematch = true;
+            
+            if (isOnline && roomId) {
+                const update = {};
+                update[`gameState.rematchStatus.p${playerNum}`] = true;
+                db.collection('rooms').doc(roomId).update(update);
+            } else {
+                startNewGame();
+            }
+            
+            updateRematchUI();
+        }
+
+        function startNewGame() {
+            document.getElementById('rematchScreen').style.display = 'none';
+            
+            gameState = {
+                balls: [],
+                currentPlayer: 1,
+                gameOver: false,
+                winner: null,
+                pottedBalls: [],
+                shotInProgress: false,
+                rematchStatus: { p1: false, p2: false },
+                gameStarted: true
+            };
+            
+            iWantRematch = false;
+            isMyTurn = playerNum === 1 || !isOnline;
+            gameStarted = true;
+            
+            initBalls();
+            updateUI();
+            
+            if (isOnline && roomId) {
+                db.collection('rooms').doc(roomId).update({
+                    gameState: gameState
+                });
+            }
+        }
+
+        function exitToMenu() {
+            document.getElementById('rematchScreen').style.display = 'none';
+            backToMenu();
+        }
+
+        // Отрисовка
+        function draw() {
+            ctx.fillStyle = '#0d3b2e';
+            ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+            
+            ctx.fillStyle = '#8B4513';
+            ctx.fillRect(0, 0, canvasWidth, 30);
+            ctx.fillRect(0, canvasHeight-30, canvasWidth, 30);
+            ctx.fillRect(0, 0, 30, canvasHeight);
+            ctx.fillRect(canvasWidth-30, 0, 30, canvasHeight);
+            
+            ctx.fillStyle = '#DAA520';
+            [
+                [0,0], [canvasWidth/2-25, 0], [canvasWidth-50, 0],
+                [0, canvasHeight-50], [canvasWidth/2-25, canvasHeight-50], [canvasWidth-50, canvasHeight-50]
+            ].forEach(([x, y]) => {
+                ctx.fillRect(x, y, 50, 50);
+            });
+            
+            ctx.fillStyle = '#1b5e48';
+            ctx.fillRect(30, 30, canvasWidth-60, canvasHeight-60);
+            
+            const pockets = [
+                {x: 30, y: 30}, {x: canvasWidth/2, y: 25}, {x: canvasWidth-30, y: 30},
+                {x: 30, y: canvasHeight-30}, {x: canvasWidth/2, y: canvasHeight-25}, {x: canvasWidth-30, y: canvasHeight-30}
+            ];
+            
+            pockets.forEach(p => {
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, 22, 0, Math.PI * 2);
+                ctx.fillStyle = '#000';
+                ctx.fill();
+                ctx.strokeStyle = '#DAA520';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+            });
+            
+            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.moveTo(canvasWidth / 4, 30);
+            ctx.lineTo(canvasWidth / 4, canvasHeight - 30);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            ctx.beginPath();
+            ctx.arc(canvasWidth / 4, canvasHeight / 2, 3, 0, Math.PI * 2);
+            ctx.fillStyle = 'rgba(255,255,255,0.5)';
+            ctx.fill();
+            
+            gameState.balls.forEach(ball => {
+                ctx.beginPath();
+                ctx.arc(ball.x + 2, ball.y + 2, BALL_RADIUS, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(0,0,0,0.4)';
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+                ctx.fillStyle = ball.color;
+                ctx.fill();
+                
+                if (ball.number > 8) {
+                    ctx.fillStyle = 'white';
+                    ctx.fillRect(ball.x - BALL_RADIUS + 2, ball.y - 4, (BALL_RADIUS - 2) * 2, 8);
+                    ctx.beginPath();
+                    ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
+                    ctx.strokeStyle = 'rgba(0,0,0,0.2)';
+                    ctx.lineWidth = 1;
+                    ctx.stroke();
+                }
+                
+                ctx.beginPath();
+                ctx.arc(ball.x - 4, ball.y - 4, 4, 0, Math.PI * 2);
+                ctx.fillStyle = 'rgba(255,255,255,0.6)';
+                ctx.fill();
+                
+                if (ball.number > 0) {
+                    ctx.fillStyle = ball.number > 8 ? '#000' : '#fff';
+                    ctx.font = 'bold 10px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(ball.number, ball.x, ball.y);
+                }
+            });
+            
+            if (isAiming && cueBall && aimCurrent) {
+                const dx = aimStart.x - aimCurrent.x;
+                const dy = aimStart.y - aimCurrent.y;
+                const dist = Math.hypot(dx, dy);
+                const angle = Math.atan2(dy, dx);
+                
+                const cueLength = Math.min(dist + 50, 150);
+                const cueX = cueBall.x - Math.cos(angle) * (BALL_RADIUS + 5);
+                const cueY = cueBall.y - Math.sin(angle) * (BALL_RADIUS + 5);
+                
+                ctx.beginPath();
+                ctx.moveTo(cueX, cueY);
+                ctx.lineTo(
+                    cueX - Math.cos(angle) * cueLength,
+                    cueY - Math.sin(angle) * cueLength
+                );
+                ctx.strokeStyle = '#DEB887';
+                ctx.lineWidth = 6;
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.moveTo(cueX, cueY);
+                ctx.lineTo(
+                    cueX - Math.cos(angle) * 20,
+                    cueY - Math.sin(angle) * 20
+                );
+                ctx.strokeStyle = '#4169E1';
+                ctx.lineWidth = 8;
+                ctx.stroke();
+                
+                ctx.beginPath();
+                ctx.arc(aimCurrent.x, aimCurrent.y, 8, 0, Math.PI * 2);
+                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(aimCurrent.x, aimCurrent.y, 3, 0, Math.PI * 2);
+                ctx.fillStyle = '#fff';
+                ctx.fill();
+                
+                ctx.beginPath();
+                ctx.moveTo(cueBall.x, cueBall.y);
+                ctx.lineTo(
+                    cueBall.x + Math.cos(angle) * 100,
+                    cueBall.y + Math.sin(angle) * 100
+                );
+                ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+
+        function gameLoop() {
+            if (gameStarted) {
+                updatePhysics();
+            }
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+
+        function initBalls() {
+            gameState.balls = [];
+            
+            cueBall = {
+                number: 0,
+                x: canvasWidth / 4,
+                y: canvasHeight / 2,
+                vx: 0,
+                vy: 0,
+                color: '#fff'
+            };
+            gameState.balls.push(cueBall);
+            
+            const startX = canvasWidth * 0.75;
+            const startY = canvasHeight / 2;
+            const spacing = BALL_RADIUS * 2 + 2;
+            let num = 1;
+            
+            for (let row = 0; row < 5; row++) {
+                for (let col = 0; col <= row; col++) {
+                    const x = startX + row * spacing * 0.866;
+                    const y = startY - (row * spacing / 2) + col * spacing;
+                    
+                    gameState.balls.push({
+                        number: num,
+                        x: x,
+                        y: y,
+                        vx: 0,
+                        vy: 0,
+                        color: BALL_COLORS[num]
+                    });
+                    num++;
+                }
+            }
+        }
+
+        // UI функции
+        function showCreateRoom() {
+            document.getElementById('createModal').style.display = 'flex';
+        }
+
+        function showJoinRoom() {
+            document.getElementById('joinModal').style.display = 'flex';
+        }
+
+        function hideModal(id) {
+            document.getElementById(id).style.display = 'none';
+        }
+
+        async function createRoom() {
+            const name = document.getElementById('createName').value.trim() || 'Игрок 1';
+            roomId = Math.floor(100000 + Math.random() * 900000).toString();
+            playerId = Date.now().toString();
+            playerNum = 1;
+            isOnline = true;
+            isMyTurn = true;
+            
+            initBalls();
+            gameStarted = true;
+            gameState.gameStarted = true;
+            
+            await db.collection('rooms').doc(roomId).set({
+                player1: { id: playerId, name: name },
+                player2: null,
+                gameState: gameState,
+                created: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            
+            hideModal('createModal');
+            document.getElementById('waitingCode').textContent = roomId;
+            document.getElementById('waitingModal').style.display = 'flex';
+            
+            unsubscribe = db.collection('rooms').doc(roomId).onSnapshot(doc => {
+                const data = doc.data();
+                if (!data) return;
+                
+                if (data.player2 && data.player2.name && document.getElementById('waitingModal').style.display === 'flex') {
+                    hideModal('waitingModal');
+                    document.getElementById('p2Name').textContent = data.player2.name;
+                    startGame();
+                }
+                
+                if (data.gameState) {
+                    const oldRematch = gameState.rematchStatus;
+                    syncGame(data.gameState);
+                    
+                    if (data.gameState.rematchStatus) {
+                        const rs = data.gameState.rematchStatus;
+                        if (rs.p1 && rs.p2 && gameState.gameOver) {
+                            startNewGame();
+                        } else if (JSON.stringify(oldRematch) !== JSON.stringify(rs)) {
+                            updateRematchUI();
+                        }
+                    }
+                }
+            });
+        }
+
+        async function joinRoom() {
+            const name = document.getElementById('joinName').value.trim() || 'Игрок 2';
+            const code = document.getElementById('joinCode').value.trim();
+            
+            if (!code) return;
+            
+            const doc = await db.collection('rooms').doc(code).get();
+            if (!doc.exists) {
+                alert('Комната не найдена!');
+                return;
+            }
+            
+            const data = doc.data();
+            if (data.player2) {
+                alert('Комната занята!');
+                return;
+            }
+            
+            roomId = code;
+            playerId = Date.now().toString();
+            playerNum = 2;
+            isOnline = true;
+            isMyTurn = false;
+            
+            await db.collection('rooms').doc(roomId).update({
+                player2: { id: playerId, name: name }
+            });
+            
+            hideModal('joinModal');
+            document.getElementById('p1Name').textContent = data.player1.name;
+            document.getElementById('p2Name').textContent = name;
+            
+            if (data.gameState) {
+                syncGame(data.gameState);
+            }
+            
+            startGame();
+            
+            unsubscribe = db.collection('rooms').doc(roomId).onSnapshot(doc => {
+                const data = doc.data();
+                if (data && data.gameState) {
+                    const oldRematch = gameState.rematchStatus;
+                    syncGame(data.gameState);
+                    
+                    if (data.gameState.rematchStatus) {
+                        const rs = data.gameState.rematchStatus;
+                        if (rs.p1 && rs.p2 && gameState.gameOver) {
+                            startNewGame();
+                        } else if (JSON.stringify(oldRematch) !== JSON.stringify(rs)) {
+                            updateRematchUI();
+                        }
+                    }
+                }
+            });
+        }
+
+        function cancelWaiting() {
+            if (unsubscribe) unsubscribe();
+            if (roomId) {
+                db.collection('rooms').doc(roomId).delete();
+            }
+            hideModal('waitingModal');
+            roomId = null;
+            gameStarted = false;
+        }
+
+        function startGame() {
+            document.getElementById('mainMenu').classList.add('hidden');
+            document.getElementById('gameUI').classList.remove('hidden');
+            document.getElementById('roomDisplay').textContent = 'КОМНАТА: ' + roomId;
+            gameStarted = true;
+            gameState.gameStarted = true;
+            updateUI();
+        }
+
+        function startBotGame() {
+            isOnline = false;
+            isMyTurn = true;
+            playerNum = 1;
+            roomId = null;
+            
+            initBalls();
+            
+            document.getElementById('p1Name').textContent = 'Вы';
+            document.getElementById('p2Name').textContent = 'Бот';
+            document.getElementById('roomDisplay').textContent = 'РЕЖИМ: ОДИНОЧНАЯ';
+            
+            document.getElementById('mainMenu').classList.add('hidden');
+            document.getElementById('gameUI').classList.remove('hidden');
+            
+            gameStarted = true;
+            gameState.gameStarted = true;
+            updateUI();
+        }
+
+        function syncGame(newState) {
+            const wasMyTurn = isMyTurn;
+            
+            gameState.balls = newState.balls.map(b => ({...b}));
+            cueBall = gameState.balls.find(b => b.number === 0);
+            gameState.currentPlayer = newState.currentPlayer;
+            gameState.gameOver = newState.gameOver;
+            gameState.winner = newState.winner;
+            gameState.shotInProgress = newState.shotInProgress;
+            gameState.rematchStatus = newState.rematchStatus || { p1: false, p2: false };
+            gameState.gameStarted = newState.gameStarted || true;
+            
+            isMyTurn = gameState.currentPlayer === playerNum;
+            
+            if (wasMyTurn !== isMyTurn) {
+                updateUI();
+            }
+        }
+
+        function updateGameInDB() {
+            if (!roomId) return;
+            db.collection('rooms').doc(roomId).update({
+                gameState: gameState
+            });
+        }
+
+        function updateUI() {
+            document.getElementById('turnText').textContent = isMyTurn ? 'ВАШ ХОД' : 'ХОД СОПЕРНИКА';
+            document.getElementById('turnText').style.color = isMyTurn ? '#ffd700' : '#888';
+            
+            document.getElementById('player1Box').classList.toggle('active', gameState.currentPlayer === 1);
+            document.getElementById('player2Box').classList.toggle('active', gameState.currentPlayer === 2);
+        }
+
+        function leaveGame() {
+            if (confirm('Выйти из игры?')) {
+                backToMenu();
+            }
+        }
+
+        function backToMenu() {
+            if (unsubscribe) unsubscribe();
+            if (roomId && playerNum === 1) {
+                db.collection('rooms').doc(roomId).delete().catch(() => {});
+            }
+            
+            roomId = null;
+            playerId = null;
+            playerNum = null;
+            isOnline = false;
+            isMyTurn = true;
+            iWantRematch = false;
+            gameStarted = false;
+            
+            gameState = {
+                balls: [],
+                currentPlayer: 1,
+                gameOver: false,
+                winner: null,
+                pottedBalls: [],
+                shotInProgress: false,
+                rematchStatus: { p1: false, p2: false },
+                gameStarted: false
+            };
+            
+            document.getElementById('gameUI').classList.add('hidden');
+            document.getElementById('winnerScreen').style.display = 'none';
+            document.getElementById('rematchScreen').style.display = 'none';
+            document.getElementById('mainMenu').classList.remove('hidden');
+        }
+
+        window.onbeforeunload = function() {
+            if (roomId && playerNum === 1) {
+                db.collection('rooms').doc(roomId).delete().catch(() => {});
+            }
+        };
+    </script>
+</body>
+</html>
