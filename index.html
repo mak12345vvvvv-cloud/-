@@ -11,7 +11,7 @@
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            touch-action: none;
+            touch-action: manipulation;
             -webkit-touch-callout: none;
             -webkit-user-select: none;
             user-select: none;
@@ -23,7 +23,7 @@
             min-height: 100vh;
             overflow: hidden;
             color: white;
-            touch-action: none;
+            touch-action: manipulation;
         }
 
         #gameContainer {
@@ -34,7 +34,6 @@
             position: relative;
         }
 
-        /* Верхняя панель */
         .top-bar {
             background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1e 100%);
             padding: 10px;
@@ -145,7 +144,6 @@
             50% { transform: scale(1.05); }
         }
 
-        /* Игровая область */
         #canvasContainer {
             flex: 1;
             display: flex;
@@ -165,7 +163,6 @@
             touch-action: none;
         }
 
-        /* Нижняя панель */
         .controls-bar {
             background: linear-gradient(0deg, #1a1a2e 0%, #0f0f1e 100%);
             padding: 10px 15px 25px;
@@ -238,7 +235,6 @@
             transform: scale(0.95);
         }
 
-        /* Меню */
         .menu-overlay {
             position: fixed;
             top: 0;
@@ -315,7 +311,6 @@
             line-height: 1.4;
         }
 
-        /* Список комнат */
         .rooms-list {
             display: none;
             position: fixed;
@@ -427,7 +422,6 @@
             font-weight: bold;
         }
 
-        /* Модальные окна */
         .modal {
             display: none;
             position: fixed;
@@ -487,7 +481,6 @@
             box-shadow: 0 4px 15px rgba(255,215,0,0.4);
         }
 
-        /* Экран победы */
         .winner-screen {
             display: none;
             position: fixed;
@@ -528,7 +521,6 @@
             margin-bottom: 30px;
         }
 
-        /* Экран реванша */
         .rematch-screen {
             display: none;
             position: fixed;
@@ -614,7 +606,29 @@
             display: none !important;
         }
 
-        /* Мобильные оптимизации */
+        .connection-status {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 5000;
+            padding: 8px 15px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: bold;
+            transition: all 0.3s;
+            display: none;
+        }
+
+        .connection-status.online {
+            background: rgba(0,255,0,0.2);
+            color: #00ff00;
+        }
+
+        .connection-status.offline {
+            background: rgba(255,0,0,0.2);
+            color: #ff0000;
+        }
+
         @media (max-width: 380px) {
             .menu-title { font-size: 1.8em; }
             .top-bar { padding: 8px 5px; min-height: 65px; }
@@ -636,6 +650,9 @@
 </head>
 <body>
     <div id="gameContainer">
+        <!-- Индикатор соединения -->
+        <div id="connectionStatus" class="connection-status"></div>
+
         <!-- Меню -->
         <div id="mainMenu" class="menu-overlay">
             <div class="menu-header">
@@ -683,7 +700,7 @@
         </div>
 
         <!-- Игровой интерфейс -->
-        <div id="gameUI" class="hidden" style="width: 100%; height: 100%; display: flex; flex-direction: column; overflow: hidden;">
+        <div id="gameUI" class="hidden" style="width: 100%; height: 100%; display: none; flex-direction: column; overflow: hidden;">
             <div class="top-bar">
                 <div class="player-box active" id="player1Box">
                     <div class="player-avatar" id="p1Avatar">P1</div>
@@ -827,8 +844,10 @@
         let unsubscribe = null;
         let iWantRematch = false;
         let gameStarted = false;
+        let lastSyncTime = 0;
+        let connectionCheckInterval = null;
         
-        // Физика - ИСПРАВЛЕННЫЕ ПАРАМЕТРЫ
+        // Физика
         const FRICTION = 0.985;
         const WALL_BOUNCE = 0.75;
         const BALL_RADIUS = 12;
@@ -836,7 +855,6 @@
         const MIN_POWER = 1;
         const STOP_THRESHOLD = 0.05;
         
-        // Границы стола (игровая зона)
         const TABLE_LEFT = 30;
         const TABLE_RIGHT = 770;
         const TABLE_TOP = 30;
@@ -852,7 +870,6 @@
         let touchId = null;
         let dragStartPos = null;
         
-        // Цвета шаров
         const BALL_COLORS = {
             0: '#ffffff',
             1: '#FFD700', 2: '#0066CC', 3: '#CC0000', 4: '#660099',
@@ -869,23 +886,34 @@
             resizeCanvas();
             window.addEventListener('resize', resizeCanvas);
             
-            // Mouse events
             canvas.addEventListener('mousedown', handleStart, {passive: false});
             canvas.addEventListener('mousemove', handleMove, {passive: false});
             canvas.addEventListener('mouseup', handleEnd, {passive: false});
             canvas.addEventListener('mouseleave', handleEnd, {passive: false});
             
-            // Touch events
             canvas.addEventListener('touchstart', handleTouchStart, {passive: false});
             canvas.addEventListener('touchmove', handleTouchMove, {passive: false});
             canvas.addEventListener('touchend', handleTouchEnd, {passive: false});
             canvas.addEventListener('touchcancel', handleTouchEnd, {passive: false});
+            
+            // Закрытие модальных окон по клику
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.addEventListener('click', function(e) {
+                    if (e.target === this) {
+                        this.style.display = 'none';
+                    }
+                });
+            });
+            
+            // Очистка старых комнат при загрузке
+            cleanupOldRooms();
             
             requestAnimationFrame(gameLoop);
         };
 
         function resizeCanvas() {
             const container = document.getElementById('canvasContainer');
+            if (!container) return;
             const aspect = 2;
             
             let w = container.clientWidth - 10;
@@ -943,7 +971,8 @@
                 aimCurrent = pos;
                 dragStartPos = pos;
                 
-                document.getElementById('powerIndicator').classList.add('active');
+                const powerIndicator = document.getElementById('powerIndicator');
+                if (powerIndicator) powerIndicator.classList.add('active');
                 updatePowerIndicator();
             }
         }
@@ -969,7 +998,8 @@
             const power = Math.min(dist / 8, MAX_POWER);
             const percentage = Math.min((power / MAX_POWER) * 100, 100);
             
-            document.getElementById('powerFill').style.width = percentage + '%';
+            const powerFill = document.getElementById('powerFill');
+            if (powerFill) powerFill.style.width = percentage + '%';
         }
 
         function handleEnd(e) {
@@ -977,7 +1007,8 @@
             e.preventDefault();
             
             isAiming = false;
-            document.getElementById('powerIndicator').classList.remove('active');
+            const powerIndicator = document.getElementById('powerIndicator');
+            if (powerIndicator) powerIndicator.classList.remove('active');
             
             if (!aimStart || !aimCurrent || !cueBall) {
                 canShoot = true;
@@ -1052,47 +1083,39 @@
             if (touchId === null) return;
             
             const touch = Array.from(e.changedTouches).find(t => t.identifier === touchId);
-            if (!touch) return;
+            if (!touch) {
+                touchId = null;
+                return;
+            }
             
             touchId = null;
             handleEnd({preventDefault: () => {}});
         }
 
-        // ИСПРАВЛЕННАЯ ФИЗИКА - шары отскакивают от стен
         function updatePhysics() {
             let anyMoving = false;
             
-            // Двигаем шары
             gameState.balls.forEach((ball) => {
                 if (Math.abs(ball.vx) > STOP_THRESHOLD || Math.abs(ball.vy) > STOP_THRESHOLD) {
-                    // Движение
                     ball.x += ball.vx;
                     ball.y += ball.vy;
                     
-                    // Трение
                     ball.vx *= FRICTION;
                     ball.vy *= FRICTION;
                     anyMoving = true;
                     
-                    // Проверка столкновений со стенами с ПРАВИЛЬНЫМ отскоком
-                    // Левая стена
                     if (ball.x - BALL_RADIUS < TABLE_LEFT) {
                         ball.x = TABLE_LEFT + BALL_RADIUS;
                         ball.vx = Math.abs(ball.vx) * WALL_BOUNCE;
-                    }
-                    // Правая стена
-                    else if (ball.x + BALL_RADIUS > TABLE_RIGHT) {
+                    } else if (ball.x + BALL_RADIUS > TABLE_RIGHT) {
                         ball.x = TABLE_RIGHT - BALL_RADIUS;
                         ball.vx = -Math.abs(ball.vx) * WALL_BOUNCE;
                     }
                     
-                    // Верхняя стена
                     if (ball.y - BALL_RADIUS < TABLE_TOP) {
                         ball.y = TABLE_TOP + BALL_RADIUS;
                         ball.vy = Math.abs(ball.vy) * WALL_BOUNCE;
-                    }
-                    // Нижняя стена
-                    else if (ball.y + BALL_RADIUS > TABLE_BOTTOM) {
+                    } else if (ball.y + BALL_RADIUS > TABLE_BOTTOM) {
                         ball.y = TABLE_BOTTOM - BALL_RADIUS;
                         ball.vy = -Math.abs(ball.vy) * WALL_BOUNCE;
                     }
@@ -1104,17 +1127,14 @@
             
             ballsMoving = anyMoving;
             
-            // Столкновения шаров друг с другом
             for (let i = 0; i < gameState.balls.length; i++) {
                 for (let j = i + 1; j < gameState.balls.length; j++) {
                     resolveCollision(gameState.balls[i], gameState.balls[j]);
                 }
             }
             
-            // Проверяем лузы после движения
             checkPockets();
             
-            // Проверяем окончание хода
             if (!ballsMoving && gameState.shotInProgress) {
                 gameState.shotInProgress = false;
                 handleTurnEnd();
@@ -1151,9 +1171,7 @@
             }
         }
 
-        // ИСПРАВЛЕННЫЕ ЛУЗЫ - шары точно залетают в лузы
         function checkPockets() {
-            // Центры луз с увеличенным радиусом захвата
             const pockets = [
                 {x: 30, y: 30, radius: 35},
                 {x: canvasWidth/2, y: 25, radius: 30},
@@ -1166,16 +1184,12 @@
             for (let i = gameState.balls.length - 1; i >= 0; i--) {
                 const ball = gameState.balls[i];
                 
-                // Проверяем каждую лузу
                 for (let pocket of pockets) {
                     const dist = Math.hypot(ball.x - pocket.x, ball.y - pocket.y);
                     
-                    // Если шар достаточно близко к центру лузы - он залетает
                     if (dist < pocket.radius) {
-                        // Дополнительная проверка - шар должен быть внутри игрового поля или близко к лузе
                         const speed = Math.hypot(ball.vx, ball.vy);
                         
-                        // Забираем шар в лузу если он близко к центру или движется туда
                         if (dist < 25 || (speed > 0 && dist < pocket.radius)) {
                             handlePocket(ball, i);
                             break;
@@ -1187,7 +1201,6 @@
 
         function handlePocket(ball, index) {
             if (ball.number === 0) {
-                // Биток - возвращаем на стол
                 setTimeout(() => {
                     const existingCue = gameState.balls.find(b => b.number === 0);
                     if (existingCue) return;
@@ -1198,12 +1211,11 @@
                     ball.vy = 0;
                     gameState.balls.push(ball);
                     
-                    if (!ballsMoving) {
+                    if (!ballsMoving && !gameState.shotInProgress) {
                         switchTurn();
                     }
                 }, 500);
             } else if (ball.number === 8) {
-                // Черный шар
                 const currentPlayerType = gameState.currentPlayer === 1 ? 
                     (gameState.player1Type || 'solid') : 
                     (gameState.player2Type || 'stripe');
@@ -1222,7 +1234,6 @@
                 gameState.balls.splice(index, 1);
                 updateBallCount();
             } else {
-                // Обычный шар
                 gameState.pottedThisTurn = gameState.pottedThisTurn || [];
                 gameState.pottedThisTurn.push(ball.number);
                 gameState.pottedBalls.push(ball.number);
@@ -1235,15 +1246,19 @@
             const solidCount = gameState.balls.filter(b => b.number >= 1 && b.number <= 7).length;
             const stripeCount = gameState.balls.filter(b => b.number >= 9 && b.number <= 15).length;
             
-            document.getElementById('p1Count').textContent = `Осталось: ${solidCount}`;
-            document.getElementById('p2Count').textContent = `Осталось: ${stripeCount}`;
+            const p1Count = document.getElementById('p1Count');
+            const p2Count = document.getElementById('p2Count');
+            if (p1Count) p1Count.textContent = `Осталось: ${solidCount}`;
+            if (p2Count) p2Count.textContent = `Осталось: ${stripeCount}`;
             
             if (!gameState.player1Type) gameState.player1Type = 'solid';
             if (!gameState.player2Type) gameState.player2Type = 'stripe';
         }
 
         function handleTurnEnd() {
-            const currentPlayerType = gameState.currentPlayer === 1 ? 'solid' : 'stripe';
+            const currentPlayerType = gameState.currentPlayer === 1 ? 
+                (gameState.player1Type || 'solid') : 
+                (gameState.player2Type || 'stripe');
             let pottedOwnBall = false;
             let pottedOpponentBall = false;
             
@@ -1287,7 +1302,7 @@
         function botTurn() {
             if (gameState.gameOver || !gameStarted) return;
             
-            const botBalls = gameState.balls.filter(b => b.number >= 9 || b.number === 8);
+            const botBalls = gameState.balls.filter(b => b.number >= 9 || (b.number === 8 && gameState.balls.filter(b2 => b2.number >= 9 && b2.number <= 15).length === 0));
             const target = botBalls[0];
             
             if (target && cueBall) {
@@ -1307,32 +1322,38 @@
             gameState.winner = winner;
             
             const isWinner = !isOnline || winner === playerNum;
-            document.getElementById('winnerTitle').textContent = isWinner ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ';
-            document.getElementById('winnerMsg').textContent = isWinner ? 'Вы выиграли!' : 'Победил соперник';
-            document.getElementById('winnerScreen').style.display = 'flex';
+            const winnerTitle = document.getElementById('winnerTitle');
+            const winnerMsg = document.getElementById('winnerMsg');
+            const winnerScreen = document.getElementById('winnerScreen');
+            
+            if (winnerTitle) winnerTitle.textContent = isWinner ? 'ПОБЕДА!' : 'ПОРАЖЕНИЕ';
+            if (winnerMsg) winnerMsg.textContent = isWinner ? 'Вы выиграли!' : 'Победил соперник';
+            if (winnerScreen) winnerScreen.style.display = 'flex';
             
             if (isOnline && roomId) {
                 db.collection('rooms').doc(roomId).update({
                     'gameState.gameOver': true,
                     'gameState.winner': winner
-                });
+                }).catch(err => console.error('Error ending game:', err));
             }
             
             setTimeout(() => {
-                document.getElementById('winnerScreen').style.display = 'none';
+                if (winnerScreen) winnerScreen.style.display = 'none';
                 showRematchScreen();
             }, 2000);
         }
 
         function showRematchScreen() {
-            document.getElementById('rematchScreen').style.display = 'flex';
+            const rematchScreen = document.getElementById('rematchScreen');
+            if (rematchScreen) rematchScreen.style.display = 'flex';
             iWantRematch = false;
             updateRematchUI();
             
             if (isOnline && roomId) {
+                gameState.rematchStatus = { p1: false, p2: false };
                 db.collection('rooms').doc(roomId).update({
                     'gameState.rematchStatus': { p1: false, p2: false }
-                });
+                }).catch(err => console.error('Error resetting rematch:', err));
             }
         }
 
@@ -1340,14 +1361,22 @@
             const p1Ready = gameState.rematchStatus?.p1 || false;
             const p2Ready = gameState.rematchStatus?.p2 || false;
             
-            document.getElementById('p1Status').textContent = p1Ready ? '✅' : '⏳';
-            document.getElementById('p1Status').classList.toggle('ready', p1Ready);
+            const p1Status = document.getElementById('p1Status');
+            const p2Status = document.getElementById('p2Status');
+            const rematchBtn = document.getElementById('rematchBtn');
             
-            document.getElementById('p2Status').textContent = p2Ready ? '✅' : '⏳';
-            document.getElementById('p2Status').classList.toggle('ready', p2Ready);
-            
-            document.getElementById('rematchBtn').textContent = iWantRematch ? 'Ожидание...' : 'Продолжить';
-            document.getElementById('rematchBtn').disabled = iWantRematch;
+            if (p1Status) {
+                p1Status.textContent = p1Ready ? '✅' : '⏳';
+                p1Status.classList.toggle('ready', p1Ready);
+            }
+            if (p2Status) {
+                p2Status.textContent = p2Ready ? '✅' : '⏳';
+                p2Status.classList.toggle('ready', p2Ready);
+            }
+            if (rematchBtn) {
+                rematchBtn.textContent = iWantRematch ? 'Ожидание...' : 'Продолжить';
+                rematchBtn.disabled = iWantRematch;
+            }
         }
 
         function requestRematch() {
@@ -1356,7 +1385,7 @@
             if (isOnline && roomId) {
                 const update = {};
                 update[`gameState.rematchStatus.p${playerNum}`] = true;
-                db.collection('rooms').doc(roomId).update(update);
+                db.collection('rooms').doc(roomId).update(update).catch(err => console.error('Error requesting rematch:', err));
             } else {
                 startNewGame();
             }
@@ -1365,7 +1394,8 @@
         }
 
         function startNewGame() {
-            document.getElementById('rematchScreen').style.display = 'none';
+            const rematchScreen = document.getElementById('rematchScreen');
+            if (rematchScreen) rematchScreen.style.display = 'none';
             
             gameState = {
                 balls: [],
@@ -1393,16 +1423,19 @@
             if (isOnline && roomId) {
                 db.collection('rooms').doc(roomId).update({
                     gameState: gameState
-                });
+                }).catch(err => console.error('Error starting new game:', err));
             }
         }
 
         function exitToMenu() {
-            document.getElementById('rematchScreen').style.display = 'none';
+            const rematchScreen = document.getElementById('rematchScreen');
+            if (rematchScreen) rematchScreen.style.display = 'none';
             backToMenu();
         }
 
         function draw() {
+            if (!ctx) return;
+            
             // Фон стола
             ctx.fillStyle = '#0d3b2e';
             ctx.fillRect(0, 0, canvasWidth, canvasHeight);
@@ -1413,15 +1446,6 @@
             ctx.fillRect(0, canvasHeight-30, canvasWidth, 30);
             ctx.fillRect(0, 0, 30, canvasHeight);
             ctx.fillRect(canvasWidth-30, 0, 30, canvasHeight);
-            
-            // Угловые накладки
-            ctx.fillStyle = '#DAA520';
-            [
-                [0,0], [canvasWidth/2-25, 0], [canvasWidth-50, 0],
-                [0, canvasHeight-50], [canvasWidth/2-25, canvasHeight-50], [canvasWidth-50, canvasHeight-50]
-            ].forEach(([x, y]) => {
-                ctx.fillRect(x, y, 50, 50);
-            });
             
             // Игровое поле
             ctx.fillStyle = '#1b5e48';
@@ -1443,37 +1467,20 @@
                 ctx.stroke();
             });
             
-            // Линия подстановки
-            ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-            ctx.lineWidth = 2;
-            ctx.setLineDash([5, 5]);
-            ctx.beginPath();
-            ctx.moveTo(canvasWidth / 4, 30);
-            ctx.lineTo(canvasWidth / 4, canvasHeight - 30);
-            ctx.stroke();
-            ctx.setLineDash([]);
-            
-            // Точка на линии
-            ctx.beginPath();
-            ctx.arc(canvasWidth / 4, canvasHeight / 2, 3, 0, Math.PI * 2);
-            ctx.fillStyle = 'rgba(255,255,255,0.5)';
-            ctx.fill();
-            
             // Шары
             gameState.balls.forEach(ball => {
-                // Тень
+                if (!ball) return;
+                
                 ctx.beginPath();
                 ctx.arc(ball.x + 2, ball.y + 2, BALL_RADIUS, 0, Math.PI * 2);
                 ctx.fillStyle = 'rgba(0,0,0,0.4)';
                 ctx.fill();
                 
-                // Основной цвет
                 ctx.beginPath();
                 ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
-                ctx.fillStyle = ball.color;
+                ctx.fillStyle = ball.color || '#fff';
                 ctx.fill();
                 
-                // Полоса для полосатых
                 if (ball.number > 8) {
                     ctx.fillStyle = 'white';
                     ctx.fillRect(ball.x - BALL_RADIUS + 2, ball.y - 4, (BALL_RADIUS - 2) * 2, 8);
@@ -1484,13 +1491,11 @@
                     ctx.stroke();
                 }
                 
-                // Блик
                 ctx.beginPath();
                 ctx.arc(ball.x - 4, ball.y - 4, 4, 0, Math.PI * 2);
                 ctx.fillStyle = 'rgba(255,255,255,0.6)';
                 ctx.fill();
                 
-                // Номер
                 if (ball.number > 0) {
                     ctx.fillStyle = ball.number > 8 ? '#000' : '#fff';
                     ctx.font = 'bold 10px Arial';
@@ -1500,7 +1505,7 @@
                 }
             });
             
-            // Кий при прицеливании
+            // Прицеливание
             if (isAiming && cueBall && aimCurrent) {
                 const dx = aimStart.x - aimCurrent.x;
                 const dy = aimStart.y - aimCurrent.y;
@@ -1516,51 +1521,16 @@
                 
                 ctx.beginPath();
                 ctx.moveTo(cueX, cueY);
-                ctx.lineTo(
-                    cueX - Math.cos(angle) * cueLength,
-                    cueY - Math.sin(angle) * cueLength
-                );
+                ctx.lineTo(cueX - Math.cos(angle) * cueLength, cueY - Math.sin(angle) * cueLength);
                 ctx.strokeStyle = '#DEB887';
                 ctx.lineWidth = 6;
                 ctx.stroke();
                 
                 ctx.beginPath();
                 ctx.moveTo(cueX, cueY);
-                ctx.lineTo(
-                    cueX - Math.cos(angle) * 25,
-                    cueY - Math.sin(angle) * 25
-                );
+                ctx.lineTo(cueX - Math.cos(angle) * 25, cueY - Math.sin(angle) * 25);
                 ctx.strokeStyle = '#4169E1';
                 ctx.lineWidth = 8;
-                ctx.stroke();
-                
-                ctx.beginPath();
-                ctx.arc(aimCurrent.x, aimCurrent.y, 10, 0, Math.PI * 2);
-                ctx.strokeStyle = 'rgba(255,255,255,0.8)';
-                ctx.lineWidth = 2;
-                ctx.stroke();
-                ctx.beginPath();
-                ctx.arc(aimCurrent.x, aimCurrent.y, 4, 0, Math.PI * 2);
-                ctx.fillStyle = '#fff';
-                ctx.fill();
-                
-                ctx.beginPath();
-                ctx.moveTo(cueBall.x, cueBall.y);
-                ctx.lineTo(
-                    cueBall.x + Math.cos(angle) * 150,
-                    cueBall.y + Math.sin(angle) * 150
-                );
-                ctx.strokeStyle = `rgba(255, 255, 255, ${0.2 + powerRatio * 0.3})`;
-                ctx.lineWidth = 2;
-                ctx.setLineDash([8, 8]);
-                ctx.stroke();
-                ctx.setLineDash([]);
-                
-                const indicatorRadius = BALL_RADIUS + 8 + powerRatio * 10;
-                ctx.beginPath();
-                ctx.arc(cueBall.x, cueBall.y, indicatorRadius, 0, Math.PI * 2);
-                ctx.strokeStyle = `hsl(${120 - powerRatio * 120}, 100%, 50%)`;
-                ctx.lineWidth = 3;
                 ctx.stroke();
             }
         }
@@ -1611,33 +1581,42 @@
 
         // UI функции
         function showCreateRoom() {
-            document.getElementById('createModal').style.display = 'flex';
+            const modal = document.getElementById('createModal');
+            if (modal) modal.style.display = 'flex';
         }
 
         function showJoinRoom() {
-            document.getElementById('joinModal').style.display = 'flex';
+            const modal = document.getElementById('joinModal');
+            if (modal) modal.style.display = 'flex';
         }
 
         function hideModal(id) {
-            document.getElementById(id).style.display = 'none';
+            const modal = document.getElementById(id);
+            if (modal) modal.style.display = 'none';
         }
 
-        // Новые функции для списка комнат
         function showRoomsList() {
-            document.getElementById('roomsList').style.display = 'flex';
-            loadRooms();
+            const roomsList = document.getElementById('roomsList');
+            if (roomsList) {
+                roomsList.style.display = 'flex';
+                loadRooms();
+            }
         }
 
         function hideRoomsList() {
-            document.getElementById('roomsList').style.display = 'none';
+            const roomsList = document.getElementById('roomsList');
+            if (roomsList) roomsList.style.display = 'none';
         }
 
         async function loadRooms() {
             const container = document.getElementById('roomsContainer');
+            if (!container) return;
+            
             container.innerHTML = '<div class="no-rooms">Загрузка...</div>';
             
             try {
                 const snapshot = await db.collection('rooms')
+                    .where('closed', '==', false)
                     .where('gameState.gameOver', '==', false)
                     .orderBy('created', 'desc')
                     .limit(20)
@@ -1679,51 +1658,277 @@
             }
         }
 
+        async function cleanupOldRooms() {
+            try {
+                const now = Date.now();
+                const snapshot = await db.collection('rooms')
+                    .where('closed', '==', true)
+                    .get();
+                
+                const batch = db.batch();
+                snapshot.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                
+                // Удаляем старые комнаты (старше 24 часов)
+                const oldSnapshot = await db.collection('rooms')
+                    .where('created', '<', new Date(now - 24 * 60 * 60 * 1000))
+                    .get();
+                
+                oldSnapshot.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                
+                // Удаляем "висячие" комнаты без второго игрока (старше 30 минут)
+                const hangingSnapshot = await db.collection('rooms')
+                    .where('player2', '==', null)
+                    .where('created', '<', new Date(now - 30 * 60 * 1000))
+                    .get();
+                
+                hangingSnapshot.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                
+                await batch.commit();
+                console.log('Очистка завершена');
+            } catch (error) {
+                console.error('Error cleaning up rooms:', error);
+            }
+        }
+
+        function showConnectionStatus(status) {
+            const el = document.getElementById('connectionStatus');
+            if (!el) return;
+            
+            el.style.display = 'block';
+            el.textContent = status === 'online' ? '✅ Онлайн' : '❌ Офлайн';
+            el.className = 'connection-status ' + status;
+            
+            setTimeout(() => {
+                el.style.display = 'none';
+            }, 3000);
+        }
+
         async function joinRoomById(id, hostName) {
             const name = prompt('Введите ваше имя:', 'Игрок 2');
             if (!name) return;
             
-            roomId = id;
-            playerId = Date.now().toString();
-            playerNum = 2;
-            isOnline = true;
-            isMyTurn = false;
-            
             try {
-                const doc = await db.collection('rooms').doc(roomId).get();
+                // Проверяем, не занята ли комната
+                const docRef = db.collection('rooms').doc(id);
+                const doc = await docRef.get();
+                
                 if (!doc.exists) {
                     alert('Комната не найдена!');
                     return;
                 }
                 
                 const data = doc.data();
-                if (data.player2) {
-                    alert('Комната уже занята!');
+                if (data.player2 || data.closed) {
+                    alert('Комната уже занята или закрыта!');
                     return;
                 }
                 
-                await db.collection('rooms').doc(roomId).update({
+                roomId = id;
+                playerId = Date.now().toString();
+                playerNum = 2;
+                isOnline = true;
+                isMyTurn = false;
+                
+                // Атомарно обновляем комнату
+                await docRef.update({
                     player2: { id: playerId, name: name }
                 });
                 
                 hideRoomsList();
-                document.getElementById('p1Name').textContent = data.player1.name;
-                document.getElementById('p2Name').textContent = name;
+                
+                const p1Name = document.getElementById('p1Name');
+                const p2Name = document.getElementById('p2Name');
+                if (p1Name) p1Name.textContent = data.player1?.name || 'Игрок 1';
+                if (p2Name) p2Name.textContent = name;
                 
                 if (data.gameState) {
                     syncGame(data.gameState);
+                } else {
+                    initBalls();
+                    gameState.gameStarted = true;
+                    gameState.player1Type = 'solid';
+                    gameState.player2Type = 'stripe';
+                    updateBallCount();
                 }
                 
                 startGame();
                 
+                // Подписываемся на изменения
+                unsubscribe = docRef.onSnapshot(doc => {
+                    const newData = doc.data();
+                    if (!newData) {
+                        showConnectionStatus('offline');
+                        return;
+                    }
+                    
+                    if (newData.closed) {
+                        alert('Хозяин закрыл комнату');
+                        backToMenu();
+                        return;
+                    }
+                    
+                    if (newData.gameState) {
+                        const oldRematch = gameState.rematchStatus ? {...gameState.rematchStatus} : {p1: false, p2: false};
+                        syncGame(newData.gameState);
+                        
+                        if (newData.gameState.rematchStatus) {
+                            const rs = newData.gameState.rematchStatus;
+                            if (rs.p1 && rs.p2 && gameState.gameOver) {
+                                startNewGame();
+                            } else if (JSON.stringify(oldRematch) !== JSON.stringify(rs)) {
+                                updateRematchUI();
+                            }
+                        }
+                    }
+                    
+                    showConnectionStatus('online');
+                    lastSyncTime = Date.now();
+                });
+                
+                showConnectionStatus('online');
+            } catch (error) {
+                console.error('Error joining room:', error);
+                alert('Ошибка при подключении! Попробуйте другую комнату.');
+            }
+        }
+
+        async function createRoom() {
+            const nameInput = document.getElementById('createName');
+            const name = nameInput ? (nameInput.value.trim() || 'Игрок 1') : 'Игрок 1';
+            roomId = Math.floor(100000 + Math.random() * 900000).toString();
+            playerId = Date.now().toString();
+            playerNum = 1;
+            isOnline = true;
+            isMyTurn = true;
+            
+            initBalls();
+            gameStarted = true;
+            gameState.gameStarted = true;
+            gameState.player1Type = 'solid';
+            gameState.player2Type = 'stripe';
+            updateBallCount();
+            
+            try {
+                await db.collection('rooms').doc(roomId).set({
+                    player1: { id: playerId, name: name },
+                    player2: null,
+                    gameState: gameState,
+                    created: firebase.firestore.FieldValue.serverTimestamp(),
+                    closed: false
+                });
+                
+                hideModal('createModal');
+                
+                const waitingCode = document.getElementById('waitingCode');
+                const waitingModal = document.getElementById('waitingModal');
+                if (waitingCode) waitingCode.textContent = roomId;
+                if (waitingModal) waitingModal.style.display = 'flex';
+                
                 unsubscribe = db.collection('rooms').doc(roomId).onSnapshot(doc => {
                     const data = doc.data();
-                    if (data && data.gameState) {
-                        const oldRematch = gameState.rematchStatus;
+                    if (!data) return;
+                    
+                    if (data.player2 && data.player2.name && waitingModal && waitingModal.style.display === 'flex') {
+                        hideModal('waitingModal');
+                        const p2Name = document.getElementById('p2Name');
+                        if (p2Name) p2Name.textContent = data.player2.name;
+                        startGame();
+                    }
+                    
+                    if (data.gameState) {
+                        const oldRematch = gameState.rematchStatus ? {...gameState.rematchStatus} : {p1: false, p2: false};
                         syncGame(data.gameState);
                         
                         if (data.gameState.rematchStatus) {
                             const rs = data.gameState.rematchStatus;
+                            if (rs.p1 && rs.p2 && gameState.gameOver) {
+                                startNewGame();
+                            } else if (JSON.stringify(oldRematch) !== JSON.stringify(rs)) {
+                                updateRematchUI();
+                            }
+                        }
+                    }
+                });
+            } catch (error) {
+                console.error('Error creating room:', error);
+                alert('Ошибка при создании комнаты!');
+            }
+        }
+
+        async function joinRoom() {
+            const nameInput = document.getElementById('joinName');
+            const codeInput = document.getElementById('joinCode');
+            const name = nameInput ? (nameInput.value.trim() || 'Игрок 2') : 'Игрок 2';
+            const code = codeInput ? codeInput.value.trim() : '';
+            
+            if (!code) return;
+            
+            try {
+                const docRef = db.collection('rooms').doc(code);
+                const doc = await docRef.get();
+                
+                if (!doc.exists) {
+                    alert('Комната не найдена!');
+                    return;
+                }
+                
+                const data = doc.data();
+                if (data.player2 || data.closed) {
+                    alert('Комната занята или закрыта!');
+                    return;
+                }
+                
+                roomId = code;
+                playerId = Date.now().toString();
+                playerNum = 2;
+                isOnline = true;
+                isMyTurn = false;
+                
+                await docRef.update({
+                    player2: { id: playerId, name: name }
+                });
+                
+                hideModal('joinModal');
+                
+                const p1Name = document.getElementById('p1Name');
+                const p2Name = document.getElementById('p2Name');
+                if (p1Name) p1Name.textContent = data.player1?.name || 'Игрок 1';
+                if (p2Name) p2Name.textContent = name;
+                
+                if (data.gameState) {
+                    syncGame(data.gameState);
+                } else {
+                    initBalls();
+                    gameState.gameStarted = true;
+                    gameState.player1Type = 'solid';
+                    gameState.player2Type = 'stripe';
+                    updateBallCount();
+                }
+                
+                startGame();
+                
+                unsubscribe = docRef.onSnapshot(doc => {
+                    const newData = doc.data();
+                    if (!newData) return;
+                    
+                    if (newData.closed) {
+                        alert('Хозяин закрыл комнату');
+                        backToMenu();
+                        return;
+                    }
+                    
+                    if (newData.gameState) {
+                        const oldRematch = gameState.rematchStatus ? {...gameState.rematchStatus} : {p1: false, p2: false};
+                        syncGame(newData.gameState);
+                        
+                        if (newData.gameState.rematchStatus) {
+                            const rs = newData.gameState.rematchStatus;
                             if (rs.p1 && rs.p2 && gameState.gameOver) {
                                 startNewGame();
                             } else if (JSON.stringify(oldRematch) !== JSON.stringify(rs)) {
@@ -1738,118 +1943,10 @@
             }
         }
 
-        async function createRoom() {
-            const name = document.getElementById('createName').value.trim() || 'Игрок 1';
-            roomId = Math.floor(100000 + Math.random() * 900000).toString();
-            playerId = Date.now().toString();
-            playerNum = 1;
-            isOnline = true;
-            isMyTurn = true;
-            
-            initBalls();
-            gameStarted = true;
-            gameState.gameStarted = true;
-            gameState.player1Type = 'solid';
-            gameState.player2Type = 'stripe';
-            updateBallCount();
-            
-            await db.collection('rooms').doc(roomId).set({
-                player1: { id: playerId, name: name },
-                player2: null,
-                gameState: gameState,
-                created: firebase.firestore.FieldValue.serverTimestamp()
-            });
-            
-            hideModal('createModal');
-            document.getElementById('waitingCode').textContent = roomId;
-            document.getElementById('waitingModal').style.display = 'flex';
-            
-            unsubscribe = db.collection('rooms').doc(roomId).onSnapshot(doc => {
-                const data = doc.data();
-                if (!data) return;
-                
-                if (data.player2 && data.player2.name && document.getElementById('waitingModal').style.display === 'flex') {
-                    hideModal('waitingModal');
-                    document.getElementById('p2Name').textContent = data.player2.name;
-                    startGame();
-                }
-                
-                if (data.gameState) {
-                    const oldRematch = gameState.rematchStatus;
-                    syncGame(data.gameState);
-                    
-                    if (data.gameState.rematchStatus) {
-                        const rs = data.gameState.rematchStatus;
-                        if (rs.p1 && rs.p2 && gameState.gameOver) {
-                            startNewGame();
-                        } else if (JSON.stringify(oldRematch) !== JSON.stringify(rs)) {
-                            updateRematchUI();
-                        }
-                    }
-                }
-            });
-        }
-
-        async function joinRoom() {
-            const name = document.getElementById('joinName').value.trim() || 'Игрок 2';
-            const code = document.getElementById('joinCode').value.trim();
-            
-            if (!code) return;
-            
-            const doc = await db.collection('rooms').doc(code).get();
-            if (!doc.exists) {
-                alert('Комната не найдена!');
-                return;
-            }
-            
-            const data = doc.data();
-            if (data.player2) {
-                alert('Комната занята!');
-                return;
-            }
-            
-            roomId = code;
-            playerId = Date.now().toString();
-            playerNum = 2;
-            isOnline = true;
-            isMyTurn = false;
-            
-            await db.collection('rooms').doc(roomId).update({
-                player2: { id: playerId, name: name }
-            });
-            
-            hideModal('joinModal');
-            document.getElementById('p1Name').textContent = data.player1.name;
-            document.getElementById('p2Name').textContent = name;
-            
-            if (data.gameState) {
-                syncGame(data.gameState);
-            }
-            
-            startGame();
-            
-            unsubscribe = db.collection('rooms').doc(roomId).onSnapshot(doc => {
-                const data = doc.data();
-                if (data && data.gameState) {
-                    const oldRematch = gameState.rematchStatus;
-                    syncGame(data.gameState);
-                    
-                    if (data.gameState.rematchStatus) {
-                        const rs = data.gameState.rematchStatus;
-                        if (rs.p1 && rs.p2 && gameState.gameOver) {
-                            startNewGame();
-                        } else if (JSON.stringify(oldRematch) !== JSON.stringify(rs)) {
-                            updateRematchUI();
-                        }
-                    }
-                }
-            });
-        }
-
         function cancelWaiting() {
             if (unsubscribe) unsubscribe();
             if (roomId) {
-                db.collection('rooms').doc(roomId).delete();
+                db.collection('rooms').doc(roomId).update({ closed: true }).catch(() => {});
             }
             hideModal('waitingModal');
             roomId = null;
@@ -1857,10 +1954,16 @@
         }
 
         function startGame() {
-            document.getElementById('mainMenu').classList.add('hidden');
-            document.getElementById('roomsList').classList.add('hidden');
-            document.getElementById('gameUI').classList.remove('hidden');
-            document.getElementById('roomDisplay').textContent = 'КОМНАТА: ' + roomId;
+            const mainMenu = document.getElementById('mainMenu');
+            const roomsList = document.getElementById('roomsList');
+            const gameUI = document.getElementById('gameUI');
+            const roomDisplay = document.getElementById('roomDisplay');
+            
+            if (mainMenu) mainMenu.classList.add('hidden');
+            if (roomsList) roomsList.classList.add('hidden');
+            if (gameUI) gameUI.style.display = 'flex';
+            if (roomDisplay) roomDisplay.textContent = 'КОМНАТА: ' + (roomId || '----');
+            
             gameStarted = true;
             gameState.gameStarted = true;
             canShoot = true;
@@ -1879,12 +1982,17 @@
             gameState.player2Type = 'stripe';
             updateBallCount();
             
-            document.getElementById('p1Name').textContent = 'Вы';
-            document.getElementById('p2Name').textContent = 'Бот';
-            document.getElementById('roomDisplay').textContent = 'РЕЖИМ: ОДИНОЧНАЯ';
+            const p1Name = document.getElementById('p1Name');
+            const p2Name = document.getElementById('p2Name');
+            const roomDisplay = document.getElementById('roomDisplay');
+            const mainMenu = document.getElementById('mainMenu');
+            const gameUI = document.getElementById('gameUI');
             
-            document.getElementById('mainMenu').classList.add('hidden');
-            document.getElementById('gameUI').classList.remove('hidden');
+            if (p1Name) p1Name.textContent = 'Вы';
+            if (p2Name) p2Name.textContent = 'Бот';
+            if (roomDisplay) roomDisplay.textContent = 'РЕЖИМ: ОДИНОЧНАЯ';
+            if (mainMenu) mainMenu.classList.add('hidden');
+            if (gameUI) gameUI.style.display = 'flex';
             
             gameStarted = true;
             gameState.gameStarted = true;
@@ -1893,42 +2001,54 @@
         }
 
         function syncGame(newState) {
+            if (!newState || !newState.balls) return;
+            
             const wasMyTurn = isMyTurn;
             
             gameState.balls = newState.balls.map(b => ({...b}));
             cueBall = gameState.balls.find(b => b.number === 0);
-            gameState.currentPlayer = newState.currentPlayer;
-            gameState.gameOver = newState.gameOver;
-            gameState.winner = newState.winner;
-            gameState.shotInProgress = newState.shotInProgress;
+            gameState.currentPlayer = newState.currentPlayer || 1;
+            gameState.gameOver = newState.gameOver || false;
+            gameState.winner = newState.winner || null;
+            gameState.shotInProgress = newState.shotInProgress || false;
             gameState.rematchStatus = newState.rematchStatus || { p1: false, p2: false };
-            gameState.gameStarted = newState.gameStarted || true;
+            gameState.gameStarted = newState.gameStarted !== false;
             gameState.player1Type = newState.player1Type || 'solid';
             gameState.player2Type = newState.player2Type || 'stripe';
+            gameState.pottedBalls = newState.pottedBalls || [];
             
             isMyTurn = gameState.currentPlayer === playerNum;
             
             if (wasMyTurn !== isMyTurn) {
                 canShoot = true;
-                updateUI();
-                updateBallCount();
             }
+            
+            updateUI();
+            updateBallCount();
         }
 
         function updateGameInDB() {
-            if (!roomId) return;
+            if (!roomId || !isOnline) return;
+            
             db.collection('rooms').doc(roomId).update({
                 gameState: gameState
+            }).catch(err => {
+                console.error('Error updating game:', err);
+                showConnectionStatus('offline');
             });
         }
 
         function updateUI() {
             const turnText = document.getElementById('turnText');
-            turnText.textContent = isMyTurn ? 'ВАШ ХОД' : 'ХОД СОПЕРНИКА';
-            turnText.classList.toggle('my-turn', isMyTurn);
+            const player1Box = document.getElementById('player1Box');
+            const player2Box = document.getElementById('player2Box');
             
-            document.getElementById('player1Box').classList.toggle('active', gameState.currentPlayer === 1);
-            document.getElementById('player2Box').classList.toggle('active', gameState.currentPlayer === 2);
+            if (turnText) {
+                turnText.textContent = isMyTurn ? 'ВАШ ХОД' : 'ХОД СОПЕРНИКА';
+                turnText.classList.toggle('my-turn', isMyTurn);
+            }
+            if (player1Box) player1Box.classList.toggle('active', gameState.currentPlayer === 1);
+            if (player2Box) player2Box.classList.toggle('active', gameState.currentPlayer === 2);
         }
 
         function leaveGame() {
@@ -1937,10 +2057,19 @@
             }
         }
 
-        function backToMenu() {
-            if (unsubscribe) unsubscribe();
+        async function backToMenu() {
+            if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+            }
+            
             if (roomId && playerNum === 1) {
-                db.collection('rooms').doc(roomId).delete().catch(() => {});
+                // Помечаем комнату как закрытую вместо удаления
+                try {
+                    await db.collection('rooms').doc(roomId).update({ closed: true });
+                } catch (e) {
+                    console.error('Error closing room:', e);
+                }
             }
             
             roomId = null;
@@ -1965,17 +2094,35 @@
                 player2Type: null
             };
             
-            document.getElementById('gameUI').classList.add('hidden');
-            document.getElementById('winnerScreen').style.display = 'none';
-            document.getElementById('rematchScreen').style.display = 'none';
-            document.getElementById('mainMenu').classList.remove('hidden');
+            const gameUI = document.getElementById('gameUI');
+            const winnerScreen = document.getElementById('winnerScreen');
+            const rematchScreen = document.getElementById('rematchScreen');
+            const mainMenu = document.getElementById('mainMenu');
+            
+            if (gameUI) gameUI.style.display = 'none';
+            if (winnerScreen) winnerScreen.style.display = 'none';
+            if (rematchScreen) rematchScreen.style.display = 'none';
+            if (mainMenu) mainMenu.classList.remove('hidden');
+            
+            // Очищаем старые комнаты при возврате в меню
+            cleanupOldRooms();
         }
 
-        window.onbeforeunload = function() {
+        // Обработка закрытия вкладки
+        window.addEventListener('beforeunload', function() {
             if (roomId && playerNum === 1) {
-                db.collection('rooms').doc(roomId).delete().catch(() => {});
+                // Используем sendBeacon для надежной отправки
+                const data = JSON.stringify({ closed: true });
+                navigator.sendBeacon(`https://firestore.googleapis.com/v1/projects/online-games-a4fa6/databases/(default)/documents/rooms/${roomId}?updateMask.fieldPaths=closed`, data);
             }
-        };
+        });
+
+        // Периодическая проверка соединения
+        setInterval(() => {
+            if (isOnline && roomId && Date.now() - lastSyncTime > 10000) {
+                showConnectionStatus('offline');
+            }
+        }, 5000);
     </script>
 </body>
 </html>
