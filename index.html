@@ -606,29 +606,6 @@
             display: none !important;
         }
 
-        .connection-status {
-            position: fixed;
-            top: 10px;
-            right: 10px;
-            z-index: 5000;
-            padding: 8px 15px;
-            border-radius: 20px;
-            font-size: 12px;
-            font-weight: bold;
-            transition: all 0.3s;
-            display: none;
-        }
-
-        .connection-status.online {
-            background: rgba(0,255,0,0.2);
-            color: #00ff00;
-        }
-
-        .connection-status.offline {
-            background: rgba(255,0,0,0.2);
-            color: #ff0000;
-        }
-
         @media (max-width: 380px) {
             .menu-title { font-size: 1.8em; }
             .top-bar { padding: 8px 5px; min-height: 65px; }
@@ -650,9 +627,6 @@
 </head>
 <body>
     <div id="gameContainer">
-        <!-- Индикатор соединения -->
-        <div id="connectionStatus" class="connection-status"></div>
-
         <!-- Меню -->
         <div id="mainMenu" class="menu-overlay">
             <div class="menu-header">
@@ -844,8 +818,6 @@
         let unsubscribe = null;
         let iWantRematch = false;
         let gameStarted = false;
-        let lastSyncTime = 0;
-        let connectionCheckInterval = null;
         
         // Физика
         const FRICTION = 0.985;
@@ -1436,22 +1408,18 @@
         function draw() {
             if (!ctx) return;
             
-            // Фон стола
             ctx.fillStyle = '#0d3b2e';
             ctx.fillRect(0, 0, canvasWidth, canvasHeight);
             
-            // Борта
             ctx.fillStyle = '#8B4513';
             ctx.fillRect(0, 0, canvasWidth, 30);
             ctx.fillRect(0, canvasHeight-30, canvasWidth, 30);
             ctx.fillRect(0, 0, 30, canvasHeight);
             ctx.fillRect(canvasWidth-30, 0, 30, canvasHeight);
             
-            // Игровое поле
             ctx.fillStyle = '#1b5e48';
             ctx.fillRect(30, 30, canvasWidth-60, canvasHeight-60);
             
-            // Лузы
             const pockets = [
                 {x: 30, y: 30}, {x: canvasWidth/2, y: 25}, {x: canvasWidth-30, y: 30},
                 {x: 30, y: canvasHeight-30}, {x: canvasWidth/2, y: canvasHeight-25}, {x: canvasWidth-30, y: canvasHeight-30}
@@ -1467,7 +1435,6 @@
                 ctx.stroke();
             });
             
-            // Шары
             gameState.balls.forEach(ball => {
                 if (!ball) return;
                 
@@ -1505,7 +1472,6 @@
                 }
             });
             
-            // Прицеливание
             if (isAiming && cueBall && aimCurrent) {
                 const dx = aimStart.x - aimCurrent.x;
                 const dy = aimStart.y - aimCurrent.y;
@@ -1615,9 +1581,10 @@
             container.innerHTML = '<div class="no-rooms">Загрузка...</div>';
             
             try {
+                // Показываем ТОЛЬКО свободные комнаты (status = 'waiting')
                 const snapshot = await db.collection('rooms')
+                    .where('status', '==', 'waiting')
                     .where('closed', '==', false)
-                    .where('gameState.gameOver', '==', false)
                     .orderBy('created', 'desc')
                     .limit(20)
                     .get();
@@ -1631,7 +1598,6 @@
                 snapshot.forEach(doc => {
                     const data = doc.data();
                     const roomId = doc.id;
-                    const isFull = data.player2 !== null;
                     
                     const roomItem = document.createElement('div');
                     roomItem.className = 'room-item';
@@ -1640,16 +1606,10 @@
                             <div class="room-code-display">Комната: ${roomId}</div>
                             <div class="room-host">Хозяин: ${data.player1?.name || 'Неизвестно'}</div>
                         </div>
-                        <div class="room-status ${isFull ? 'full' : ''}">${isFull ? 'ПОЛНАЯ' : 'СВОБОДНАЯ'}</div>
+                        <div class="room-status">СВОБОДНАЯ</div>
                     `;
                     
-                    if (!isFull) {
-                        roomItem.onclick = () => joinRoomById(roomId, data.player1?.name);
-                    } else {
-                        roomItem.style.opacity = '0.5';
-                        roomItem.style.cursor = 'not-allowed';
-                    }
-                    
+                    roomItem.onclick = () => joinRoomById(roomId, data.player1?.name);
                     container.appendChild(roomItem);
                 });
             } catch (error) {
@@ -1661,33 +1621,26 @@
         async function cleanupOldRooms() {
             try {
                 const now = Date.now();
-                const snapshot = await db.collection('rooms')
+                const batch = db.batch();
+                
+                // Удаляем закрытые комнаты
+                const closedSnapshot = await db.collection('rooms')
                     .where('closed', '==', true)
                     .get();
-                
-                const batch = db.batch();
-                snapshot.forEach(doc => {
-                    batch.delete(doc.ref);
-                });
+                closedSnapshot.forEach(doc => batch.delete(doc.ref));
                 
                 // Удаляем старые комнаты (старше 24 часов)
                 const oldSnapshot = await db.collection('rooms')
                     .where('created', '<', new Date(now - 24 * 60 * 60 * 1000))
                     .get();
+                oldSnapshot.forEach(doc => batch.delete(doc.ref));
                 
-                oldSnapshot.forEach(doc => {
-                    batch.delete(doc.ref);
-                });
-                
-                // Удаляем "висячие" комнаты без второго игрока (старше 30 минут)
+                // Удаляем "висячие" комнаты (waiting дольше 30 минут)
                 const hangingSnapshot = await db.collection('rooms')
-                    .where('player2', '==', null)
+                    .where('status', '==', 'waiting')
                     .where('created', '<', new Date(now - 30 * 60 * 1000))
                     .get();
-                
-                hangingSnapshot.forEach(doc => {
-                    batch.delete(doc.ref);
-                });
+                hangingSnapshot.forEach(doc => batch.delete(doc.ref));
                 
                 await batch.commit();
                 console.log('Очистка завершена');
@@ -1696,38 +1649,32 @@
             }
         }
 
-        function showConnectionStatus(status) {
-            const el = document.getElementById('connectionStatus');
-            if (!el) return;
-            
-            el.style.display = 'block';
-            el.textContent = status === 'online' ? '✅ Онлайн' : '❌ Офлайн';
-            el.className = 'connection-status ' + status;
-            
-            setTimeout(() => {
-                el.style.display = 'none';
-            }, 3000);
-        }
-
         async function joinRoomById(id, hostName) {
             const name = prompt('Введите ваше имя:', 'Игрок 2');
             if (!name) return;
             
             try {
-                // Проверяем, не занята ли комната
                 const docRef = db.collection('rooms').doc(id);
-                const doc = await docRef.get();
                 
-                if (!doc.exists) {
-                    alert('Комната не найдена!');
-                    return;
-                }
-                
-                const data = doc.data();
-                if (data.player2 || data.closed) {
-                    alert('Комната уже занята или закрыта!');
-                    return;
-                }
+                // Используем транзакцию для атомарного обновления
+                await db.runTransaction(async (transaction) => {
+                    const doc = await transaction.get(docRef);
+                    
+                    if (!doc.exists) {
+                        throw new Error('Комната не найдена!');
+                    }
+                    
+                    const data = doc.data();
+                    
+                    if (data.status !== 'waiting' || data.closed) {
+                        throw new Error('Комната уже занята или закрыта!');
+                    }
+                    
+                    transaction.update(docRef, {
+                        player2: { id: Date.now().toString(), name: name },
+                        status: 'active'
+                    });
+                });
                 
                 roomId = id;
                 playerId = Date.now().toString();
@@ -1735,12 +1682,11 @@
                 isOnline = true;
                 isMyTurn = false;
                 
-                // Атомарно обновляем комнату
-                await docRef.update({
-                    player2: { id: playerId, name: name }
-                });
-                
                 hideRoomsList();
+                
+                // Получаем данные комнаты
+                const doc = await docRef.get();
+                const data = doc.data();
                 
                 const p1Name = document.getElementById('p1Name');
                 const p2Name = document.getElementById('p2Name');
@@ -1760,10 +1706,10 @@
                 startGame();
                 
                 // Подписываемся на изменения
-                unsubscribe = docRef.onSnapshot(doc => {
+                unsubscribe = docRef.onSnapshot((doc) => {
                     const newData = doc.data();
                     if (!newData) {
-                        showConnectionStatus('offline');
+                        backToMenu();
                         return;
                     }
                     
@@ -1786,15 +1732,13 @@
                             }
                         }
                     }
-                    
-                    showConnectionStatus('online');
-                    lastSyncTime = Date.now();
+                }, (error) => {
+                    console.error('Snapshot error:', error);
                 });
                 
-                showConnectionStatus('online');
             } catch (error) {
                 console.error('Error joining room:', error);
-                alert('Ошибка при подключении! Попробуйте другую комнату.');
+                alert(error.message || 'Ошибка при подключении!');
             }
         }
 
@@ -1820,7 +1764,8 @@
                     player2: null,
                     gameState: gameState,
                     created: firebase.firestore.FieldValue.serverTimestamp(),
-                    closed: false
+                    closed: false,
+                    status: 'waiting'
                 });
                 
                 hideModal('createModal');
@@ -1830,15 +1775,17 @@
                 if (waitingCode) waitingCode.textContent = roomId;
                 if (waitingModal) waitingModal.style.display = 'flex';
                 
-                unsubscribe = db.collection('rooms').doc(roomId).onSnapshot(doc => {
+                unsubscribe = db.collection('rooms').doc(roomId).onSnapshot((doc) => {
                     const data = doc.data();
                     if (!data) return;
                     
-                    if (data.player2 && data.player2.name && waitingModal && waitingModal.style.display === 'flex') {
-                        hideModal('waitingModal');
-                        const p2Name = document.getElementById('p2Name');
-                        if (p2Name) p2Name.textContent = data.player2.name;
-                        startGame();
+                    if (data.player2 && data.player2.name && data.status === 'active') {
+                        if (waitingModal && waitingModal.style.display === 'flex') {
+                            hideModal('waitingModal');
+                            const p2Name = document.getElementById('p2Name');
+                            if (p2Name) p2Name.textContent = data.player2.name;
+                            startGame();
+                        }
                     }
                     
                     if (data.gameState) {
@@ -1854,6 +1801,8 @@
                             }
                         }
                     }
+                }, (error) => {
+                    console.error('Snapshot error:', error);
                 });
             } catch (error) {
                 console.error('Error creating room:', error);
@@ -1871,18 +1820,26 @@
             
             try {
                 const docRef = db.collection('rooms').doc(code);
-                const doc = await docRef.get();
                 
-                if (!doc.exists) {
-                    alert('Комната не найдена!');
-                    return;
-                }
-                
-                const data = doc.data();
-                if (data.player2 || data.closed) {
-                    alert('Комната занята или закрыта!');
-                    return;
-                }
+                // Используем транзакцию
+                await db.runTransaction(async (transaction) => {
+                    const doc = await transaction.get(docRef);
+                    
+                    if (!doc.exists) {
+                        throw new Error('Комната не найдена!');
+                    }
+                    
+                    const data = doc.data();
+                    
+                    if (data.status !== 'waiting' || data.closed) {
+                        throw new Error('Комната занята или закрыта!');
+                    }
+                    
+                    transaction.update(docRef, {
+                        player2: { id: Date.now().toString(), name: name },
+                        status: 'active'
+                    });
+                });
                 
                 roomId = code;
                 playerId = Date.now().toString();
@@ -1890,11 +1847,10 @@
                 isOnline = true;
                 isMyTurn = false;
                 
-                await docRef.update({
-                    player2: { id: playerId, name: name }
-                });
-                
                 hideModal('joinModal');
+                
+                const doc = await docRef.get();
+                const data = doc.data();
                 
                 const p1Name = document.getElementById('p1Name');
                 const p2Name = document.getElementById('p2Name');
@@ -1913,9 +1869,12 @@
                 
                 startGame();
                 
-                unsubscribe = docRef.onSnapshot(doc => {
+                unsubscribe = docRef.onSnapshot((doc) => {
                     const newData = doc.data();
-                    if (!newData) return;
+                    if (!newData) {
+                        backToMenu();
+                        return;
+                    }
                     
                     if (newData.closed) {
                         alert('Хозяин закрыл комнату');
@@ -1936,17 +1895,23 @@
                             }
                         }
                     }
+                }, (error) => {
+                    console.error('Snapshot error:', error);
                 });
+                
             } catch (error) {
                 console.error('Error joining room:', error);
-                alert('Ошибка при подключении!');
+                alert(error.message || 'Ошибка при подключении!');
             }
         }
 
         function cancelWaiting() {
-            if (unsubscribe) unsubscribe();
+            if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+            }
             if (roomId) {
-                db.collection('rooms').doc(roomId).update({ closed: true }).catch(() => {});
+                db.collection('rooms').doc(roomId).update({ closed: true, status: 'finished' }).catch(() => {});
             }
             hideModal('waitingModal');
             roomId = null;
@@ -2034,7 +1999,6 @@
                 gameState: gameState
             }).catch(err => {
                 console.error('Error updating game:', err);
-                showConnectionStatus('offline');
             });
         }
 
@@ -2063,10 +2027,15 @@
                 unsubscribe = null;
             }
             
-            if (roomId && playerNum === 1) {
-                // Помечаем комнату как закрытую вместо удаления
+            if (roomId) {
                 try {
-                    await db.collection('rooms').doc(roomId).update({ closed: true });
+                    // Если хост выходит - закрываем комнату
+                    if (playerNum === 1) {
+                        await db.collection('rooms').doc(roomId).update({ 
+                            closed: true, 
+                            status: 'finished' 
+                        });
+                    }
                 } catch (e) {
                     console.error('Error closing room:', e);
                 }
@@ -2104,25 +2073,20 @@
             if (rematchScreen) rematchScreen.style.display = 'none';
             if (mainMenu) mainMenu.classList.remove('hidden');
             
-            // Очищаем старые комнаты при возврате в меню
+            // Очищаем старые комнаты
             cleanupOldRooms();
         }
 
         // Обработка закрытия вкладки
         window.addEventListener('beforeunload', function() {
             if (roomId && playerNum === 1) {
-                // Используем sendBeacon для надежной отправки
-                const data = JSON.stringify({ closed: true });
-                navigator.sendBeacon(`https://firestore.googleapis.com/v1/projects/online-games-a4fa6/databases/(default)/documents/rooms/${roomId}?updateMask.fieldPaths=closed`, data);
+                const data = JSON.stringify({ closed: true, status: 'finished' });
+                navigator.sendBeacon(
+                    `https://firestore.googleapis.com/v1/projects/online-games-a4fa6/databases/(default)/documents/rooms/${roomId}?updateMask.fieldPaths=closed&updateMask.fieldPaths=status`, 
+                    data
+                );
             }
         });
-
-        // Периодическая проверка соединения
-        setInterval(() => {
-            if (isOnline && roomId && Date.now() - lastSyncTime > 10000) {
-                showConnectionStatus('offline');
-            }
-        }, 5000);
     </script>
 </body>
 </html>
